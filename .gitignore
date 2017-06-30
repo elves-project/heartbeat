@@ -1,0 +1,9 @@
+/target
+/.settings
+.classpath
+.project
+/lib
+.idea/
+bin/
+*.iml
+conf/conf.properties
