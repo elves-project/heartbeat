@@ -41,5 +41,23 @@ public class CustomAgent {
 	public void setAgent(AgentInfo agent) {
 		this.agent = agent;
 	}
-	
+
+	@Override
+	public boolean equals(Object obj) {
+		if(null==obj||!(obj instanceof AgentInfo)){
+			return false;
+		}
+
+		AgentInfo other=((CustomAgent)obj).getAgent();
+		String ip =other.getIp();
+		String id =other.getId();
+		String version =other.getVersion();
+		String apps =other.getApps();
+
+		AgentInfo curr =getAgent();
+		if(curr.getIp().equals(ip)&&curr.getId().equals(id)&&curr.getVersion().equals(version)&&curr.getApps().equals(apps)){
+			return true;
+		}
+		return false;
+	}
 }

@@ -1,7 +1,7 @@
 package cn.gyyx.elves.util.zk;
 
-import java.io.UnsupportedEncodingException;
-
+import cn.gyyx.elves.heartbeat.util.Storage;
+import cn.gyyx.elves.util.ExceptionUtil;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.framework.listen.ListenerContainer;
@@ -11,7 +11,7 @@ import org.apache.curator.retry.ExponentialBackoffRetry;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.CreateMode;
 
-import cn.gyyx.elves.util.ExceptionUtil;
+import java.io.UnsupportedEncodingException;
 
 /**
  * @ClassName: ZookeeperExcutor
@@ -23,9 +23,9 @@ public class ZookeeperExcutor {
 
 	private static final Logger LOG=Logger.getLogger(ZookeeperExcutor.class);
 	
-	private CuratorFramework client;
-	
-	public ZookeeperExcutor(String zklist,int sessionTimeout,int connectTimeout){
+	public static CuratorFramework client;
+
+	public static void initClient(String zklist,int sessionTimeout,int connectTimeout){
 		client = CuratorFrameworkFactory.builder()
 				.connectString(zklist).sessionTimeoutMs(sessionTimeout)
 				.connectionTimeoutMs(connectTimeout)
@@ -33,10 +33,6 @@ public class ZookeeperExcutor {
 		client.start();
 	}
 	
-	public CuratorFramework getClient() {
-		return client;
-	}
-
 	/**
 	 * @Title: createNodeAddListener
 	 * @Description: 添加node节点
@@ -44,7 +40,7 @@ public class ZookeeperExcutor {
 	 * @param nodeData 设定文件
 	 * @return void    返回类型
 	 */
-	public String createNode(String nodePath,String nodeData){
+	public static String createNode(String nodePath,String nodeData){
 		if(client!=null){
 			try {
 				String nodeName=client.create().creatingParentsIfNeeded()
@@ -68,7 +64,7 @@ public class ZookeeperExcutor {
 	 * @param nodeData 节点数据
 	 * @return void    返回类型
 	 */
-	public ConnectionStateListener getListener(final String nodePath,final String nodeData){
+	public static ConnectionStateListener getListener(final String nodePath,final String nodeData){
 		if(null!=client){
 			ConnectionStateListener connectListener = new ConnectionStateListener() {
 				@Override
@@ -105,13 +101,12 @@ public class ZookeeperExcutor {
 		return null;
 	}
 	
-	public void clearListener(){
+	public static void clearListener(){
 		ListenerContainer<ConnectionStateListener> list=(ListenerContainer<ConnectionStateListener>) client.getConnectionStateListenable();
 		list.clear();
 	}
 	
-	public void addListener(String nodePath,String nodeData){
+	public static void addListener(String nodePath,String nodeData){
 		client.getConnectionStateListenable().addListener(getListener(nodePath, nodeData));
 	}
-	
 }

@@ -1,18 +1,16 @@
 package cn.gyyx.elves.heartbeat.util;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
+import cn.gyyx.elves.heartbeat.thrift.AgentInfo;
+import cn.gyyx.elves.util.ExceptionUtil;
+import cn.gyyx.elves.util.MD5Utils;
+import cn.gyyx.elves.util.mq.PropertyLoader;
+import cn.gyyx.elves.util.zk.ZookeeperExcutor;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.TypeReference;
-
-import cn.gyyx.elves.heartbeat.thrift.AgentInfo;
-import cn.gyyx.elves.util.mq.PropertyLoader;
+import java.util.*;
 
 /**
  * @ClassName: Storage
@@ -28,7 +26,7 @@ public class Storage {
 	/*
 	 * agent 信息数据存储,key 为ip ,value为agent数据
 	 */
-	private static Map<String,CustomAgent> cache=new HashMap<String,CustomAgent>();
+	private static Map<String, CustomAgent> cache=new HashMap<String,CustomAgent>();
 	
 	/*
 	 * 存放supervisor 管理的app信息（instruct,version）,定时同步+被动接收更新通知 (格式 [{'app':'testApp','version':'1.0','agentList':['192.168.1.1','192.168.1.2']})
@@ -36,9 +34,25 @@ public class Storage {
 	private static List<Map<String,Object>> cacheAppInfo = new ArrayList<Map<String,Object>>();
 	
 	/*
-	 * agent超时时间  60 s = 60000 ms
+	 * heartbeat超时时间  6minute = 600 s = 60000 ms
 	 */
-	private static final long TIME_OUT=600000;
+	public static final long TIME_OUT=600000;
+
+	/*
+	 * agent 心跳时间为 60s = 60000ms
+	 */
+	public static final long AGENT_HEARTBEAT_TIME = 60000;
+
+	/*
+	 * 程序启动后，是否完成与zk 数据同步状态标识
+	 */
+	public static boolean syncZkFlag = false;
+
+	/*
+	 * zk heartbeat节点数据
+	 */
+	public static List<AgentInfo> zkHeartbeatData = new ArrayList<AgentInfo>();
+
 	
 	/**
 	 * @Title: updateAppInfo
@@ -94,10 +108,24 @@ public class Storage {
 	 */
 	public static void put(AgentInfo info){
 		if(StringUtils.isNotBlank(info.getIp())){
+			//判断是否要发起同步（如果AgentInfo并未改变则不发起同步操作）
+			boolean doSync=true;
+			CustomAgent custom = Storage.cache.get(info.getIp());
+			if(null!=custom&&custom.equals(info)){
+				doSync=false;
+			}
+
 			Storage.cache.put(info.getIp(), new CustomAgent(System.currentTimeMillis(),info));
+
+			//同步更新在线机器信息到zk
+			if(Storage.syncZkFlag&&doSync){
+				syncCacheDataToZk();
+			}
+		}else{
+			LOG.error("heartbeat module reveive elves-agent ip is empty"+info.toString());
 		}
 	}
-	
+
 	/**
 	 * @Title: get
 	 * @Description: 从cache获取在线的agent
@@ -178,5 +206,46 @@ public class Storage {
 	public static void setCache(Map<String, CustomAgent> cache) {
 		Storage.cache = cache;
 	}
-	
+
+
+	/**
+	 * 本地数据同步到zk
+	 */
+	public static void syncCacheDataToZk(){
+		try {
+			//本地内存中的在线数据(排序)
+			List<AgentInfo> localData = null;
+			Iterator<CustomAgent> iterator = Storage.cache.values().iterator();
+			while(iterator.hasNext()){
+				CustomAgent custom= iterator.next();
+				if(agentIsOnLine(custom)){
+					localData.add(custom.getAgent());
+				}
+			}
+			//排序
+			Collections.sort(localData, new Comparator<AgentInfo>() {
+				@Override
+				public int compare(AgentInfo o1, AgentInfo o2) {
+					return o1.getIp().compareTo(o2.getIp());
+				}
+			});
+
+			if(!Storage.syncZkFlag){
+				ZookeeperExcutor.client.setData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat",JSON.toJSONString(localData).getBytes("UTF-8"));
+				String zkData = new String(ZookeeperExcutor.client.getData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat"),"UTF-8");
+				if(StringUtils.isNotBlank(zkData)){
+					Storage.zkHeartbeatData = JSON.parseObject(zkData, new TypeReference<List<AgentInfo>>(){});
+				}
+				//修改第一次同步状态
+				Storage.syncZkFlag=true;
+			}else{
+				if(localData!=null&&!MD5Utils.MD5(JSON.toJSONString(localData)).equals(MD5Utils.MD5(JSON.toJSONString(Storage.zkHeartbeatData)))){
+					ZookeeperExcutor.client.setData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat",JSON.toJSONString(localData).getBytes("UTF-8"));
+					Storage.zkHeartbeatData = localData;
+				}
+			}
+		}catch (Exception e){
+			LOG.error("syncCacheDataToZk error,msg:"+ ExceptionUtil.getStackTraceAsString(e));
+		}
+	}
 }

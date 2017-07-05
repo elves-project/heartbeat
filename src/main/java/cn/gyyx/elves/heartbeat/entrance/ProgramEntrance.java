@@ -36,7 +36,7 @@ import com.alibaba.fastjson.TypeReference;
 public class ProgramEntrance {
 	
 	private static final Logger LOG=Logger.getLogger(ProgramEntrance.class);
-	
+
 	/**
 	 * 加载所有配置文件的路径
 	 */
@@ -70,13 +70,24 @@ public class ProgramEntrance {
 	 */
 	private static void registerZooKeeper() throws Exception{
 		LOG.info("regist zookeeper ....");
-		ZookeeperExcutor zke=new ZookeeperExcutor(PropertyLoader.ZOOKEEPER_HOST,
+		ZookeeperExcutor.initClient(PropertyLoader.ZOOKEEPER_HOST,
 				PropertyLoader.ZOOKEEPER_OUT_TIME, PropertyLoader.ZOOKEEPER_OUT_TIME);
-		//创建节点
-		String nodeName=zke.createNode(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat/", "");
+		//创建模块根节点
+		if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT)){
+			ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT);
+		}
+		if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat")){
+			ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat");
+		}
+
+		//创建当前模块的临时子节点
+		String nodeName=ZookeeperExcutor.createNode(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat/", "");
+		LOG.info("create heartbeat module zk ephemeral node,nodeName:"+nodeName);
 		if(null!=nodeName){
-			//添加创建的节点监听，断线重连
-			zke.addListener(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat/", "");
+			//添加创建的临时节点监听，断线重连
+			ZookeeperExcutor.addListener(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat/", "");
+		}else{
+			throw new Exception("create heartbeat module zk ephemeral node fail");
 		}
 	}
 	
@@ -108,6 +119,25 @@ public class ProgramEntrance {
 			}
 		}.start();
 	}
+
+	/**
+	 * 程序启动 开启一个线程 ，本地数据与zk数据做同步，同步完成之后，每次心跳包再与zk做数据的更新
+	 */
+	public static void syncZkDataThread(){
+		LOG.info("create a thread to sync zk data....");
+		new Thread(){
+			@Override
+			public void run(){
+				try {
+					/* 等待agent发送一批心跳包之后，与zk数据做同步 */
+					Thread.sleep(Storage.AGENT_HEARTBEAT_TIME*2);
+					Storage.syncCacheDataToZk();
+				} catch (InterruptedException e) {
+					LOG.error("syncZkDataThread error,msg:"+ExceptionUtil.getStackTraceAsString(e));
+				}
+			}
+		}.start();
+	}
 	
 	/**
 	 * @Title: initCacheAppInfo
@@ -133,7 +163,7 @@ public class ProgramEntrance {
 			LOG.error("init cache app info fail,msg:"+ExceptionUtil.getStackTraceAsString(e));
 		}
 	}
-	
+
 	public static void main(String[] args) {
 		if(null!=args&&args.length>0){
 			try {
@@ -148,10 +178,12 @@ public class ProgramEntrance {
 				
 				registerZooKeeper();
 				LOG.info("registerZooKeeper success!");
-				
+
 				startHeartbeatThriftService();
 				LOG.info("start heartbeat thrift server success!");
-				
+
+				syncZkDataThread();
+
 				initCacheAppInfo();
 			} catch (Exception e) {
 				LOG.error("start heartbeat error:"+ExceptionUtil.getStackTraceAsString(e));
