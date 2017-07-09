@@ -3,9 +3,12 @@ package cn.gyyx.elves.heartbeat.entrance;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+import cn.gyyx.elves.heartbeat.thrift.AgentInfo;
+import cn.gyyx.elves.heartbeat.util.CustomAgent;
+import cn.gyyx.elves.util.MD5Utils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 import org.apache.thrift.TProcessor;
@@ -13,6 +16,7 @@ import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.server.TServer;
 import org.apache.thrift.server.TThreadPoolServer;
 import org.apache.thrift.transport.TServerSocket;
+import org.apache.zookeeper.CreateMode;
 import org.springframework.context.support.FileSystemXmlApplicationContext;
 
 import cn.gyyx.elves.heartbeat.service.impl.HeartbeatModuleServiceImpl;
@@ -45,6 +49,7 @@ public class ProgramEntrance {
 		SpringUtil.RABBITMQ_CONFIG_PATH="file:"+configPath+File.separator+"conf"+File.separator+"rabbitmq.xml";
 		SpringUtil.PROPERTIES_CONFIG_PATH=configPath+File.separator+"conf"+File.separator+"conf.properties";
 		SpringUtil.LOG4J_CONFIG_PATH=configPath+File.separator+"conf"+File.separator+"log4j.properties";
+		LOG.info("load AllConfig FilePath success!");
 	}
 	
 	/**
@@ -53,6 +58,7 @@ public class ProgramEntrance {
 	private static void loadLogConfig() throws Exception{
 		InputStream in=new FileInputStream(SpringUtil.LOG4J_CONFIG_PATH);// 自定义配置
 		PropertyConfigurator.configure(in);
+		LOG.info("load LogConfig success!");
 	}
 	
 	/**
@@ -60,6 +66,7 @@ public class ProgramEntrance {
 	 */
 	private static void loadApplicationXml() throws Exception{
 		SpringUtil.app = new FileSystemXmlApplicationContext(SpringUtil.SPRING_CONFIG_PATH,SpringUtil.RABBITMQ_CONFIG_PATH);
+		LOG.info("load Application Xml success!");
 	}
 	
 	/**
@@ -69,28 +76,73 @@ public class ProgramEntrance {
 	 * @return void    返回类型
 	 */
 	private static void registerZooKeeper() throws Exception{
-		LOG.info("regist zookeeper ....");
-		ZookeeperExcutor.initClient(PropertyLoader.ZOOKEEPER_HOST,
-				PropertyLoader.ZOOKEEPER_OUT_TIME, PropertyLoader.ZOOKEEPER_OUT_TIME);
-		//创建模块根节点
-		if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT)){
-			ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT);
-		}
-		if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat")){
-			ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat");
-		}
+		if("true".equalsIgnoreCase(PropertyLoader.ZOOKEEPER_ENABLED)){
+			LOG.info("regist zookeeper ....");
+			ZookeeperExcutor.initClient(PropertyLoader.ZOOKEEPER_HOST,
+					PropertyLoader.ZOOKEEPER_OUT_TIME, PropertyLoader.ZOOKEEPER_OUT_TIME);
+			//创建模块根节点
+			if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT)){
+				ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT);
+			}
+			if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat")){
+				ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat");
+			}
 
-		//创建当前模块的临时子节点
-		String nodeName=ZookeeperExcutor.createNode(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat/", "");
-		LOG.info("create heartbeat module zk ephemeral node,nodeName:"+nodeName);
-		if(null!=nodeName){
-			//添加创建的临时节点监听，断线重连
-			ZookeeperExcutor.addListener(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat/", "");
-		}else{
-			throw new Exception("create heartbeat module zk ephemeral node fail");
+			//创建数据节点
+			if(null==ZookeeperExcutor.client.checkExists().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat/agent")){
+				ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat/agent");
+			}
+
+			//创建当前模块的临时子节点
+			String nodeName=ZookeeperExcutor.createNode(PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat/", "");
+			LOG.info("create heartbeat module zk ephemeral node,nodeName:"+nodeName);
+			if(null!=nodeName){
+				//添加创建的临时节点监听，断线重连
+				ZookeeperExcutor.addListener(PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat/", "");
+			}else{
+				throw new Exception("create heartbeat module zk ephemeral node fail");
+			}
+			LOG.info("register ZooKeeper success!");
 		}
 	}
-	
+
+	/**
+	 * 如果zookeeper.enabled 开启，则监听zk变化，实时同步数据
+	 */
+	public static void syncZkDataToCache(){
+		LOG.info("sync zk data to local cache....");
+		if("true".equalsIgnoreCase(PropertyLoader.ZOOKEEPER_ENABLED)){
+			new Thread() {
+				@Override
+				public void run() {
+					try {
+						//获取子节点数据存入内存
+						String node = PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat/agent";
+						List<String> list =ZookeeperExcutor.client.getChildren().forPath(node);
+						Map<String, CustomAgent>  zkData =new HashMap<String,CustomAgent>();
+						for(String key :list){
+							String value = new String(ZookeeperExcutor.client.getData().forPath(node+"/"+key),"UTF-8");
+							if(StringUtils.isNotBlank(value)){
+								CustomAgent current = JSON.parseObject(value, new TypeReference<CustomAgent>(){});
+								zkData.put(key,current);
+							}
+						}
+						Storage.setCache(zkData);
+						//添加子节点监听
+						ZookeeperExcutor.addNodeChildrenChangeListener(node);
+						//修改状态
+						Storage.syncZkFlag=true;
+						LOG.debug("sync zk data to local cache finish");
+					}catch (Exception e){
+						LOG.error("syncCacheDataToZk error,msg:"+ ExceptionUtil.getStackTraceAsString(e));
+					}
+				}
+			}.start();
+		}else{
+			Storage.syncZkFlag=true;
+		}
+	}
+
 	/**
 	 * @Title: startHeartbeatThriftService
 	 * @Description: 开启Heartbeat 同步、异步调用服务
@@ -118,27 +170,10 @@ public class ProgramEntrance {
 				}
 			}
 		}.start();
+		LOG.info("start heartbeat thrift server success!");
 	}
 
-	/**
-	 * 程序启动 开启一个线程 ，本地数据与zk数据做同步，同步完成之后，每次心跳包再与zk做数据的更新
-	 */
-	public static void syncZkDataThread(){
-		LOG.info("create a thread to sync zk data....");
-		new Thread(){
-			@Override
-			public void run(){
-				try {
-					/* 等待agent发送一批心跳包之后，与zk数据做同步 */
-					Thread.sleep(Storage.AGENT_HEARTBEAT_TIME*2);
-					Storage.syncCacheDataToZk();
-				} catch (InterruptedException e) {
-					LOG.error("syncZkDataThread error,msg:"+ExceptionUtil.getStackTraceAsString(e));
-				}
-			}
-		}.start();
-	}
-	
+
 	/**
 	 * @Title: initCacheAppInfo
 	 * @Description: heartbeat 启动，如果AUTH_MODE开启，初始化appinfo 到内存中
@@ -164,31 +199,33 @@ public class ProgramEntrance {
 		}
 	}
 
-	public static void main(String[] args) {
-		if(null!=args&&args.length>0){
-			try {
-				loadAllConfigFilePath(args[0]);
-				LOG.info("loadAllConfigFilePath success!");
-				
-		    	loadLogConfig();
-				LOG.info("loadLogConfig success!");
+	public static void main(String[] args) throws Exception {
+//		if(null!=args&&args.length>0){
+//			try {
+//				loadAllConfigFilePath(args[0]);
+//
+//		    	loadLogConfig();
+//
+//				loadApplicationXml();
+//
+//				startHeartbeatThriftService();
+//
+//				registerZooKeeper();
+//
+//				syncZkDataToCache();
+//
+//				initCacheAppInfo();
+//			} catch (Exception e) {
+//				LOG.error("start heartbeat error:"+ExceptionUtil.getStackTraceAsString(e));
+//				System.exit(1);
+//			}
+//    	}
 
-				loadApplicationXml();
-				LOG.info("loadApplicationXml success!");
-				
-				registerZooKeeper();
-				LOG.info("registerZooKeeper success!");
-
-				startHeartbeatThriftService();
-				LOG.info("start heartbeat thrift server success!");
-
-				syncZkDataThread();
-
-				initCacheAppInfo();
-			} catch (Exception e) {
-				LOG.error("start heartbeat error:"+ExceptionUtil.getStackTraceAsString(e));
-				System.exit(1);
-			}
-    	}
+		ZookeeperExcutor.initClient("127.0.0.1:2181",3000,3000);
+		ZookeeperExcutor.client.create().creatingParentsIfNeeded()
+				.withMode(CreateMode.PERSISTENT)
+				.forPath("/Schedular/asdf111", "".getBytes("UTF-8"));;
+		List<String> list =ZookeeperExcutor.client.getChildren().forPath("/Schedular");
+		System.out.println(list.toString());
 	}
 }

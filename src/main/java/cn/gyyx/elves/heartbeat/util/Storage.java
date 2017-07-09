@@ -48,12 +48,7 @@ public class Storage {
 	 */
 	public static boolean syncZkFlag = false;
 
-	/*
-	 * zk heartbeat节点数据
-	 */
-	public static List<AgentInfo> zkHeartbeatData = new ArrayList<AgentInfo>();
 
-	
 	/**
 	 * @Title: updateAppInfo
 	 * @Description: 更新内存中app 数据
@@ -108,18 +103,9 @@ public class Storage {
 	 */
 	public static void put(AgentInfo info){
 		if(StringUtils.isNotBlank(info.getIp())){
-			//判断是否要发起同步（如果AgentInfo并未改变则不发起同步操作）
-			boolean doSync=true;
-			CustomAgent custom = Storage.cache.get(info.getIp());
-			if(null!=custom&&custom.equals(info)){
-				doSync=false;
-			}
-
-			Storage.cache.put(info.getIp(), new CustomAgent(System.currentTimeMillis(),info));
-
-			//同步更新在线机器信息到zk
-			if(Storage.syncZkFlag&&doSync){
-				syncCacheDataToZk();
+			//同步更新在线机器信息到zk(zk修改后会通知本地监听器，修改内存数据)
+			if(Storage.syncZkFlag){
+				syncCacheDataToZk(info.getIp(),new CustomAgent(System.currentTimeMillis(),info));
 			}
 		}else{
 			LOG.error("heartbeat module reveive elves-agent ip is empty"+info.toString());
@@ -204,53 +190,59 @@ public class Storage {
 	}
 
 	public static void setCache(Map<String, CustomAgent> cache) {
-		Storage.cache = cache;
+		Storage.cache.clear();
+		Storage.cache.putAll(cache);
 	}
 
 
 	/**
 	 * 本地数据同步到zk
 	 */
-	public static void syncCacheDataToZk(){
+	private static void syncCacheDataToZk(String key,CustomAgent value){
 		try {
-			LOG.debug("start sync cache data to zk...");
-			//本地内存中的在线数据(排序)
-			List<AgentInfo> localData = new ArrayList<AgentInfo>();
-			Iterator<CustomAgent> iterator = Storage.cache.values().iterator();
-			while(iterator.hasNext()){
-				CustomAgent custom= iterator.next();
-				if(agentIsOnLine(custom)){
-					localData.add(custom.getAgent());
-				}
-			}
-			//排序
-			Collections.sort(localData, new Comparator<AgentInfo>() {
-				@Override
-				public int compare(AgentInfo o1, AgentInfo o2) {
-					return o1.getIp().compareTo(o2.getIp());
-				}
-			});
-
-			if(!Storage.syncZkFlag){
-				ZookeeperExcutor.client.setData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat",JSON.toJSONString(localData).getBytes("UTF-8"));
-				String zkData = new String(ZookeeperExcutor.client.getData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat"),"UTF-8");
-				if(StringUtils.isNotBlank(zkData)){
-					Storage.zkHeartbeatData = JSON.parseObject(zkData, new TypeReference<List<AgentInfo>>(){});
-				}
-				//修改第一次同步状态
-				Storage.syncZkFlag=true;
-				LOG.debug("init sync localData to zk finish");
-			}else{
-				if(MD5Utils.MD5(JSON.toJSONString(localData)).equals(MD5Utils.MD5(JSON.toJSONString(Storage.zkHeartbeatData)))){
-					ZookeeperExcutor.client.setData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat",JSON.toJSONString(localData).getBytes("UTF-8"));
-					Storage.zkHeartbeatData = localData;
-					LOG.debug("sync localData to zk finish");
+			if(Storage.syncZkFlag&&"true".equals(PropertyLoader.ZOOKEEPER_ENABLED)){
+				String nodeName = PropertyLoader.ZOOKEEPER_ROOT+"/heartbeat/agent/"+key;
+				if(null==ZookeeperExcutor.client.checkExists().forPath(nodeName)){
+					//新增
+					ZookeeperExcutor.client.create().creatingParentsIfNeeded().forPath(nodeName,JSON.toJSONString(value).getBytes("UTF-8"));
 				}else{
-					LOG.debug("localData equals zk data");
+					//更新
+					ZookeeperExcutor.client.setData().forPath(nodeName,JSON.toJSONString(value).getBytes("UTF-8"));
 				}
+			}else{
+				Storage.cache.put(key,value);
 			}
+			LOG.debug("start sync cache data to zk...");
+
 		}catch (Exception e){
 			LOG.error("syncCacheDataToZk error,msg:"+ ExceptionUtil.getStackTraceAsString(e));
+		}
+	}
+
+	/**
+	 * 接收监听器监听结果，处理zk数据到内存中
+	 */
+	public static void updateCacheDataFromZk(int flag,String key,String value){
+		if(flag!=1&&StringUtils.isBlank(value)){
+			return;
+		}
+		CustomAgent current=null;
+		try {
+			current = JSON.parseObject(value, new TypeReference<CustomAgent>(){});
+		}catch (Exception e){
+			LOG.error("update data from zk error:"+ExceptionUtil.getStackTraceAsString(e));
+			return;
+		}
+
+		if(flag==0){
+			//新增
+			Storage.cache.put(key,current);
+		}else if(flag==1){
+			//删除
+			Storage.cache.remove(key);
+		}else{
+			//编辑
+			Storage.cache.put(key,current);
 		}
 	}
 }
