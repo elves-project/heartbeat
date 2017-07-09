@@ -213,8 +213,9 @@ public class Storage {
 	 */
 	public static void syncCacheDataToZk(){
 		try {
+			LOG.debug("start sync cache data to zk...");
 			//本地内存中的在线数据(排序)
-			List<AgentInfo> localData = null;
+			List<AgentInfo> localData = new ArrayList<AgentInfo>();
 			Iterator<CustomAgent> iterator = Storage.cache.values().iterator();
 			while(iterator.hasNext()){
 				CustomAgent custom= iterator.next();
@@ -238,10 +239,14 @@ public class Storage {
 				}
 				//修改第一次同步状态
 				Storage.syncZkFlag=true;
+				LOG.debug("init sync localData to zk finish");
 			}else{
-				if(localData!=null&&!MD5Utils.MD5(JSON.toJSONString(localData)).equals(MD5Utils.MD5(JSON.toJSONString(Storage.zkHeartbeatData)))){
+				if(MD5Utils.MD5(JSON.toJSONString(localData)).equals(MD5Utils.MD5(JSON.toJSONString(Storage.zkHeartbeatData)))){
 					ZookeeperExcutor.client.setData().forPath(PropertyLoader.ZOOKEEPER_ROOT+"/Heartbeat",JSON.toJSONString(localData).getBytes("UTF-8"));
 					Storage.zkHeartbeatData = localData;
+					LOG.debug("sync localData to zk finish");
+				}else{
+					LOG.debug("localData equals zk data");
 				}
 			}
 		}catch (Exception e){
