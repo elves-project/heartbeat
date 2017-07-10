@@ -2,7 +2,6 @@ package cn.gyyx.elves.heartbeat.util;
 
 import cn.gyyx.elves.heartbeat.thrift.AgentInfo;
 import cn.gyyx.elves.util.ExceptionUtil;
-import cn.gyyx.elves.util.MD5Utils;
 import cn.gyyx.elves.util.mq.PropertyLoader;
 import cn.gyyx.elves.util.zk.ZookeeperExcutor;
 import com.alibaba.fastjson.JSON;
@@ -10,7 +9,10 @@ import com.alibaba.fastjson.TypeReference;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * @ClassName: Storage
@@ -223,6 +225,7 @@ public class Storage {
 	 * 接收监听器监听结果，处理zk数据到内存中
 	 */
 	public static void updateCacheDataFromZk(int flag,String key,String value){
+	    LOG.debug("zk node update ,key:"+key+",value:"+value+",flag:"+flag);
 		if(flag!=1&&StringUtils.isBlank(value)){
 			return;
 		}
@@ -234,15 +237,18 @@ public class Storage {
 			return;
 		}
 
+		String ip = key.split("/")[4];
+
 		if(flag==0){
 			//新增
-			Storage.cache.put(key,current);
+			Storage.cache.put(ip,current);
 		}else if(flag==1){
 			//删除
-			Storage.cache.remove(key);
+			Storage.cache.remove(ip);
 		}else{
 			//编辑
-			Storage.cache.put(key,current);
+			Storage.cache.put(ip,current);
 		}
+		LOG.debug("current cache:"+JSON.toJSONString(Storage.cache));
 	}
 }

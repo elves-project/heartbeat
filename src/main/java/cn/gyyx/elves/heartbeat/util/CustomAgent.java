@@ -1,13 +1,6 @@
 package cn.gyyx.elves.heartbeat.util;
 
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-
-import com.alibaba.fastjson.JSON;
-
 import cn.gyyx.elves.heartbeat.thrift.AgentInfo;
-import cn.gyyx.elves.util.DateUtils;
 
 /**
  * @ClassName: CustomAgent
@@ -19,7 +12,9 @@ public class CustomAgent {
 
 	private long checkTime;				//检测时间
 	private AgentInfo agent;			//agent信息
-	
+
+    public CustomAgent(){}
+
 	public CustomAgent(long checkTime, AgentInfo agent) {
 		super();
 		this.checkTime = checkTime;

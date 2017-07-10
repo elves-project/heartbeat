@@ -1,13 +1,16 @@
 package cn.gyyx.elves.heartbeat.entrance;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.util.*;
-
-import cn.gyyx.elves.heartbeat.thrift.AgentInfo;
+import cn.gyyx.elves.heartbeat.service.impl.HeartbeatModuleServiceImpl;
+import cn.gyyx.elves.heartbeat.thrift.HeartbeatService;
 import cn.gyyx.elves.heartbeat.util.CustomAgent;
-import cn.gyyx.elves.util.MD5Utils;
+import cn.gyyx.elves.heartbeat.util.Storage;
+import cn.gyyx.elves.util.ExceptionUtil;
+import cn.gyyx.elves.util.SpringUtil;
+import cn.gyyx.elves.util.mq.MessageProducer;
+import cn.gyyx.elves.util.mq.PropertyLoader;
+import cn.gyyx.elves.util.zk.ZookeeperExcutor;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
@@ -16,20 +19,14 @@ import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.server.TServer;
 import org.apache.thrift.server.TThreadPoolServer;
 import org.apache.thrift.transport.TServerSocket;
-import org.apache.zookeeper.CreateMode;
 import org.springframework.context.support.FileSystemXmlApplicationContext;
 
-import cn.gyyx.elves.heartbeat.service.impl.HeartbeatModuleServiceImpl;
-import cn.gyyx.elves.heartbeat.thrift.HeartbeatService;
-import cn.gyyx.elves.heartbeat.util.Storage;
-import cn.gyyx.elves.util.ExceptionUtil;
-import cn.gyyx.elves.util.SpringUtil;
-import cn.gyyx.elves.util.mq.MessageProducer;
-import cn.gyyx.elves.util.mq.PropertyLoader;
-import cn.gyyx.elves.util.zk.ZookeeperExcutor;
-
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.TypeReference;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * @ClassName: ProgramEntrance
@@ -110,8 +107,8 @@ public class ProgramEntrance {
 	 * 如果zookeeper.enabled 开启，则监听zk变化，实时同步数据
 	 */
 	public static void syncZkDataToCache(){
-		LOG.info("sync zk data to local cache....");
 		if("true".equalsIgnoreCase(PropertyLoader.ZOOKEEPER_ENABLED)){
+            LOG.info("sync zk data to local cache....");
 			new Thread() {
 				@Override
 				public void run() {
@@ -132,7 +129,7 @@ public class ProgramEntrance {
 						ZookeeperExcutor.addNodeChildrenChangeListener(node);
 						//修改状态
 						Storage.syncZkFlag=true;
-						LOG.debug("sync zk data to local cache finish");
+						LOG.info("sync zk data to local cache finish");
 					}catch (Exception e){
 						LOG.error("syncCacheDataToZk error,msg:"+ ExceptionUtil.getStackTraceAsString(e));
 					}
@@ -154,7 +151,6 @@ public class ProgramEntrance {
 			@Override
 			public void run(){
 				int port=PropertyLoader.THRIFT_HEARTBEAT_PORT;
-				LOG.info("get zookeeper SchedulerPort:"+port);
 				try {
 					HeartbeatModuleServiceImpl heartbeatModuleServiceImpl =  SpringUtil.getBean(HeartbeatModuleServiceImpl.class); 
 					TProcessor tprocessor = new HeartbeatService.Processor<HeartbeatService.Iface>(heartbeatModuleServiceImpl);
@@ -200,32 +196,25 @@ public class ProgramEntrance {
 	}
 
 	public static void main(String[] args) throws Exception {
-//		if(null!=args&&args.length>0){
-//			try {
-//				loadAllConfigFilePath(args[0]);
-//
-//		    	loadLogConfig();
-//
-//				loadApplicationXml();
-//
-//				startHeartbeatThriftService();
-//
-//				registerZooKeeper();
-//
-//				syncZkDataToCache();
-//
-//				initCacheAppInfo();
-//			} catch (Exception e) {
-//				LOG.error("start heartbeat error:"+ExceptionUtil.getStackTraceAsString(e));
-//				System.exit(1);
-//			}
-//    	}
+		if(null!=args&&args.length>0){
+			try {
+				loadAllConfigFilePath(args[0]);
 
-		ZookeeperExcutor.initClient("127.0.0.1:2181",3000,3000);
-		ZookeeperExcutor.client.create().creatingParentsIfNeeded()
-				.withMode(CreateMode.PERSISTENT)
-				.forPath("/Schedular/asdf111", "".getBytes("UTF-8"));;
-		List<String> list =ZookeeperExcutor.client.getChildren().forPath("/Schedular");
-		System.out.println(list.toString());
+		    	loadLogConfig();
+
+				loadApplicationXml();
+
+				startHeartbeatThriftService();
+
+				registerZooKeeper();
+
+				syncZkDataToCache();
+
+				initCacheAppInfo();
+			} catch (Exception e) {
+				LOG.error("start heartbeat error:"+ExceptionUtil.getStackTraceAsString(e));
+				System.exit(1);
+			}
+    	}
 	}
 }
