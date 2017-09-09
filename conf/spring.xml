@@ -20,7 +20,7 @@
 	
 	<!-- 定时检测App数据信息  -->
     <task:scheduled-tasks>           
-        <task:scheduled ref="appInfoTasker" method="excute" cron="0/60 * * * * ?"/>
+        <task:scheduled ref="appInfoTasker" method="excute" cron="0 0 * * * ?"/>
     </task:scheduled-tasks> 
 	
 </beans>
